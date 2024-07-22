@@ -1,0 +1,92 @@
+//@version=5
+strategy("RSI and MA 200 Trend Strategy", overlay=true)
+
+// Параметры стратегии
+maLength = input(200, title="MA Length")
+rsiLength = input(14, title="RSI Length")
+rsiOverbought = input(70, title="RSI Overbought Level")
+rsiOversold = input(30, title="RSI Oversold Level")
+minProfitPercent = input(0.5, title="Minimum Profit (%)")
+stopLossPercent = input(2, title="Stop Loss (%)")
+lookback = input(14, title="Lookback Period for Highs and Lows")
+
+// Функция для расчета уровней поддержки и сопротивления
+calculateSupportResistance(data_low, data_high) =>
+    lowestLow = ta.lowest(data_low, lookback)  // Минимальные цены за период
+    highestHigh = ta.highest(data_high, lookback)  // Максимальные цены за период
+    supportLevels = ta.valuewhen(data_low == lowestLow, lowestLow, 0)  // Уровни поддержки
+    resistanceLevels = ta.valuewhen(data_high == highestHigh, highestHigh, 0)  // Уровни сопротивления
+    [supportLevels, resistanceLevels]
+
+// Основные данные: цены закрытия, максимальные и минимальные цены
+data_close = request.security(syminfo.tickerid, "D", close)
+data_high = request.security(syminfo.tickerid, "D", high)
+data_low = request.security(syminfo.tickerid, "D", low)
+
+// Расчет уровней поддержки и сопротивления для шортовых позиций
+[support_levels_short, resistance_levels_short] = calculateSupportResistance(data_low, data_high)
+
+// Расчет уровней поддержки и сопротивления для лонговых позиций
+[support_levels_long, resistance_levels_long] = calculateSupportResistance(data_low, data_high)
+
+// Определение MA 200 на 4-часовом таймфрейме
+ma200_4h = request.security(syminfo.tickerid, "240", ta.sma(close, maLength))
+
+// Определение тренда
+downtrend = close < ma200_4h
+uptrend = close > ma200_4h
+
+// Определение RSI на 15-минутном таймфрейме
+rsi_15m = request.security(syminfo.tickerid, "15", ta.rsi(close, rsiLength))
+
+// Условия для сигнала на продажу: цена пересекла уровень 70 при нисходящем тренде
+sellSignal = ta.crossunder(rsi_15m, rsiOverbought) and downtrend
+
+// Условия для сигнала на покупку: цена пересекла уровень 30 при восходящем тренде
+buySignal = ta.crossover(rsi_15m, rsiOversold) and uptrend
+
+// Управление стратегией
+if (sellSignal and strategy.opentrades == 0)
+    strategy.entry("Sell", strategy.short)
+if (buySignal and strategy.opentrades == 0)
+    strategy.entry("Buy", strategy.long)
+
+// Проверка наличия открытых сделок и условие для закрытия сделки
+if (strategy.opentrades > 0)
+    currentPrice = close
+    
+    // Условия для закрытия короткой сделки
+    if (strategy.position_size < 0 and close < ma200_4h and rsi_15m < rsiOversold and currentPrice <= support_levels_short)
+        minProfit = strategy.position_avg_price * (1 + minProfitPercent / 100)
+        if (close > minProfit)
+            strategy.close("Sell", comment="Profit target reached")
+        else
+            strategy.close("Sell", comment="RSI and MA conditions met")
+    
+    // Условия для закрытия длинной сделки
+    if (strategy.position_size > 0 and close > ma200_4h and rsi_15m > rsiOverbought and currentPrice >= resistance_levels_long)
+        minProfit = strategy.position_avg_price * (1 - minProfitPercent / 100)
+        if (close < minProfit)
+            strategy.close("Buy", comment="Profit target reached")
+        else
+            strategy.close("Buy", comment="RSI and MA conditions met")
+
+// Условие для стоп-лосса: цена находится на 2% выше от МА200 на 4-часовом таймфрейме
+stopLossPriceShort = ma200_4h * (1 + stopLossPercent / 100)
+stopLossPriceLong = ma200_4h * (1 - stopLossPercent / 100)
+strategy.exit("Stop Loss Short", "Sell", stop=stopLossPriceShort)
+strategy.exit("Stop Loss Long", "Buy", stop=stopLossPriceLong)
+
+// Визуализация MA 200 и тренда
+plot(ma200_4h, title="MA 200 (4H)", color=color.red)
+
+// Перекрашивание свечей в красный цвет при нисходящем тренде, в зелёный при восходящем
+barcolor(downtrend ? color.red : (uptrend ? color.green : na))
+
+// Отображение уровней поддержки и сопротивления на графике для шортовых позиций
+plot(support_levels_short, color=color.green, linewidth=1, title="Support Levels (Short)")
+plot(resistance_levels_short, color=color.red, linewidth=1, title="Resistance Levels (Short)")
+
+// Отображение уровней поддержки и сопротивления на графике для лонговых позиций
+plot(support_levels_long, color=color.green, linewidth=1, title="Support Levels (Long)")
+plot(resistance_levels_long, color=color.red, linewidth=1, title="Resistance Levels (Long)")
